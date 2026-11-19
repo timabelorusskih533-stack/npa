@@ -7,7 +7,11 @@
 <meta name="theme-color" content="#14325c">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="НПА">
 <style>
 :root{
   --bg:#f3f5f9; --card:#fff; --ink:#152033; --muted:#5f6b7f; --line:#e1e6ee;
@@ -47,6 +51,14 @@ a{color:var(--navy2)}
 .npa-txt em{display:block;font-style:normal;font-size:12px;color:var(--navy2);margin-top:4px}
 .chev{flex:none;color:#a8b2c3}
 .npa-btn.off{opacity:.55}
+.editing .npa-btn{cursor:default;border-style:dashed}
+.editing .npa-btn:active{transform:none;background:var(--card)}
+.mv{display:flex;flex-direction:column;gap:6px;flex:none}
+.mv button{width:38px;height:34px;border:1px solid var(--line);background:var(--bg);border-radius:9px;display:grid;place-items:center;cursor:pointer;color:var(--navy2)}
+.mv button:disabled{opacity:.3}
+.ord-row{display:flex;justify-content:center;gap:8px;margin:14px 0 0}
+.ord-btn{border:0;background:none;color:#9aa5b6;font-size:12.5px;padding:6px 10px;border-radius:8px;cursor:pointer}
+.ord-btn.on{background:var(--navy);color:#fff;font-weight:600;padding:6px 16px}
 
 .favs{display:flex;flex-direction:column;gap:8px}
 .fav{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 13px;cursor:pointer;text-align:left;width:100%}
@@ -152,6 +164,12 @@ const NPA = [
   { id:'fzop', short:'ФЗ «О полиции»', badge:'3-ФЗ', color:'#14325c',
     full:'Федеральный закон от 07.02.2011 N 3-ФЗ "О полиции"', edition:'ред. от 04.08.2026' },
 ];
+// порядок НПА на главной (меняется кнопкой внизу, хранится на устройстве)
+function orderedNPA(){
+  const ord=store.get('order',[]);
+  return [...NPA].sort((a,b)=>{const ia=ord.indexOf(a.id), ib=ord.indexOf(b.id); return (ia<0?99:ia)-(ib<0?99:ib) || NPA.indexOf(a)-NPA.indexOf(b)});
+}
+let editOrder=false;
 // как называть статью: «Статья 12.8. Название» / «Преамбула»
 const artName = a => a.head || ('Статья '+a.num+'.'+(a.title?' '+a.title:''));
 const artShort = a => a.head || ('Ст. '+a.num);
@@ -319,19 +337,34 @@ function home(q){
     <div id="gres"></div>
     <div id="homeMain">
       <div class="sec-title">Нормативные правовые акты</div>
-      <div class="npa-list">${NPA.map(n=>`
-        <button class="npa-btn" data-id="${n.id}">
+      <div class="npa-list ${editOrder?'editing':''}">${orderedNPA().map((n,i,arr)=>`
+        <div class="npa-btn" role="button" tabindex="0" data-id="${n.id}">
           <div class="npa-ico" ${tagStyle(n)}>${esc(n.badge)}</div>
           <div class="npa-txt"><b>${esc(n.short)}</b><span>${esc(n.full)}</span><em>${esc(n.edition||'')}</em></div>
-          <span class="chev">${ICON.chev}</span>
-        </button>`).join('')}
+          ${editOrder?`<span class="mv"><button data-mv="-1" ${i?'':'disabled'} aria-label="Выше">${ICON.up}</button><button data-mv="1" ${i<arr.length-1?'':'disabled'} aria-label="Ниже">${ICON.down}</button></span>`:`<span class="chev">${ICON.chev}</span>`}
+        </div>`).join('')}
       </div>
+      <div class="ord-row">${editOrder
+        ?`<button class="ord-btn" id="ordReset">Как было</button><button class="ord-btn on" id="ordDone">Готово</button>`
+        :`<button class="ord-btn" id="ordEdit">⇅ изменить порядок</button>`}</div>
       ${favs.length?`<div class="sec-title">Избранные статьи</div><div class="favs">${favs.map(f=>`
         <button class="fav" data-h="/${f.id}/${esc(f.num)}"><small>${esc(NPA.find(n=>n.id===f.id)?.badge||'')} ${esc(f.short||('ст.\u00a0'+f.num))}</small><span>${esc(f.title)}</span></button>`).join('')}</div>`:''}
     </div>
     <div class="foot">Тексты — по данным СПС КонсультантПлюс.<br>Сверяйтесь с официальным опубликованием.</div>
   </div>`;
-  app.querySelectorAll('.npa-btn').forEach(b=>b.onclick=()=>go('/'+b.dataset.id));
+  app.querySelectorAll('.npa-btn').forEach(b=>b.onclick=e=>{
+    const mv=e.target.closest('[data-mv]');
+    if(editOrder){
+      if(!mv) return;
+      const ids=orderedNPA().map(n=>n.id), i=ids.indexOf(b.dataset.id), j=i+(+mv.dataset.mv);
+      [ids[i],ids[j]]=[ids[j],ids[i]]; store.set('order',ids); home(''); return;
+    }
+    go('/'+b.dataset.id);
+  });
+  const ob=id=>app.querySelector(id);
+  if(ob('#ordEdit')) ob('#ordEdit').onclick=()=>{editOrder=true;home('')};
+  if(ob('#ordDone')) ob('#ordDone').onclick=()=>{editOrder=false;home('')};
+  if(ob('#ordReset')) ob('#ordReset').onclick=()=>{store.set('order',[]);home('')};
   app.querySelectorAll('.fav').forEach(b=>b.onclick=()=>go(b.dataset.h));
   bindSearch('#gf','#gq', v=>{ setQ('/',v); globalSearch(v) });
   if(q) globalSearch(q);
