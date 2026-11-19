@@ -39,6 +39,8 @@ def read_lines(path: Path):
 
 RE_PART    = re.compile(r'^(ОБЩАЯ|ОСОБЕННАЯ)\s+ЧАСТЬ\s*$', re.I)
 RE_SECTION = re.compile(r'^Раздел\s+([IVXLC]+(?:\.\d+)?)\.?\s*(.*)$', re.I)
+RE_SECTION_W = re.compile(r'^РАЗДЕЛ\s+(ПЕРВЫЙ|ВТОРОЙ|ТРЕТИЙ|ЧЕТВЕРТЫЙ|ПЯТЫЙ|ШЕСТОЙ)$')
+RE_DASH = re.compile(r'^-{10,}$')
 RE_CHAPTER = re.compile(r'^Глава\s+(\d+(?:\.\d+)?)\.?\s*(.*)$', re.I)
 RE_ARTICLE = re.compile(r'^Статья\s+(\d+(?:\.\d+)*(?:-\d+)?)\.?\s*(.*)$')
 NOISE = re.compile(r'^(Документ предоставлен КонсультантПлюс|www\.consultant\.ru|Дата сохранения|Страница \d+ из \d+|Список изменяющих документов|\(см\. Обзор изменений)', re.I)
@@ -47,13 +49,21 @@ def clean(s):
     s = s.replace(' ', ' ').replace('\t', ' ')
     return re.sub(r'\s{2,}', ' ', s).strip()
 
-def parse(lines):
+def parse(lines, preamble=None):
     items, cur, pending = [], None, None   # pending — заголовок, продолжающийся на след. строке
     seen = set()
     for raw in lines:
         s = clean(raw)
-        if not s or NOISE.match(s):
+        if not s or NOISE.match(s) or RE_DASH.match(s):
             continue
+        if preamble and not items and s.startswith(preamble):
+            cur = {'type': 'article', 'num': 'Преамбула', 'head': 'Преамбула', 'title': '', 'text': []}
+            items.append(cur); seen.add(cur['num'])
+        m = RE_SECTION_W.match(s)
+        if m:
+            cur = None
+            it = {'type': 'section', 'label': 'Раздел ' + m.group(1).lower(), 'title': 'Раздел ' + m.group(1).lower()}
+            items.append(it); pending = it; continue
         if s == 'Президент' and cur is not None:   # подпись в конце закона
             break
         m = RE_PART.match(s)
@@ -85,9 +95,21 @@ def parse(lines):
                 and not re.search(r'[а-яё]', s) and re.search(r'[А-ЯЁ]', s):
             items[-1]['title'] = (items[-1]['title'] + ' ' + s).strip(); continue
         pending = None
+        if cur is None and re.match(r'^<(\d+|\*)>', s):   # сноска к заголовку главы — пропускаем
+            continue
+        if cur is None and items and items[-1]['type'] in ('chapter', 'section'):
+            h = items[-1]
+            num = ''.join(w[0] for w in re.findall(r'[А-ЯЁа-яё]+', h['title']) if len(w) > 1).upper()[:5] or 'Т'
+            cur = {'type': 'article', 'num': num, 'head': h['title'].capitalize(), 'title': '', 'text': []}
+            items.append(cur); seen.add(num)
         if cur is not None:
             cur['text'].append(s)
     for it in items:
+        if it['type'] != 'article':
+            it['title'] = re.sub(r'\s*<(\d+|\*)>', '', it['title']).strip()
+        if it['type'] == 'article' and not it['title'] and not it.get('head') and it['text']:
+            first = re.sub(r'^\d+\.\s*', '', it['text'][0])
+            it['hint'] = first[:90].rsplit(' ', 1)[0] + '…' if len(first) > 90 else first
         if it['type'] == 'article':
             t = it['text']
             if not it['title'] and t and re.match(r'^Утратил[аио]? силу', t[0]):
@@ -101,8 +123,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('out')
     ap.add_argument('--title', default=''); ap.add_argument('--edition', default='')
+    ap.add_argument('--preamble', default='', help='начало текста преамбулы (для Конституции)')
     a = ap.parse_args()
-    items = parse(read_lines(Path(a.src)))
+    items = parse(read_lines(Path(a.src)), a.preamble or None)
     arts = [i for i in items if i['type'] == 'article']
     if not arts:
         sys.exit('Статьи не найдены — проверь исходный файл')
