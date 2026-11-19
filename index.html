@@ -77,12 +77,16 @@ a{color:var(--navy2)}
 .grp.open>button{border-radius:12px 12px 0 0;border-bottom-color:transparent}
 .arts{display:none;background:var(--card);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;overflow:hidden}
 .grp.open .arts{display:block}
+.arts.solo{display:block;border-top:1px solid var(--line);border-radius:12px;margin:8px 0}
 .part-h{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--navy2);margin:22px 4px 6px}
 .art-link{display:flex;gap:10px;width:100%;text-align:left;border:0;background:none;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;font-size:14.5px;line-height:1.35}
 .art-link:first-child{border-top:0}
 .art-link:active{background:var(--tap)}
 .art-link b{flex:none;min-width:44px;color:var(--navy2);font-weight:700}
 .art-link.lost{color:var(--muted)}
+.art-link .hint{font-style:normal;color:var(--muted)}
+.art-link b:empty{display:none}
+sup{font-size:.65em;color:var(--navy2);line-height:0}
 
 /* ---------- Результаты поиска ---------- */
 .res-info{font-size:13px;color:var(--muted);margin:12px 2px 8px}
@@ -139,11 +143,21 @@ mark.cur{background:#ffb238}
    Чтобы добавить новый НПА: положи data/<id>.json (собирается
    скриптом build.py) и добавь строку сюда. */
 const NPA = [
-  { id:'fzop', short:'ФЗ «О полиции»', badge:'3-ФЗ',
-    full:'Федеральный закон от 07.02.2011 N 3-ФЗ "О полиции"', edition:'ред. от 04.08.2026' },
-  { id:'koap', short:'КоАП РФ', badge:'КоАП', alt:true,
+  { id:'konst', short:'Конституция РФ', badge:'КРФ', color:'#8e2433',
+    full:'Конституция Российской Федерации (принята всенародным голосованием 12.12.1993)', edition:'с изменениями, одобренными в ходе общероссийского голосования 01.07.2020' },
+  { id:'uk', short:'УК РФ', badge:'УК', color:'#2c6a4c',
+    full:'Уголовный кодекс Российской Федерации от 13.06.1996 N 63-ФЗ', edition:'ред. от 04.08.2026' },
+  { id:'koap', short:'КоАП РФ', badge:'КоАП', color:'#b8892e',
     full:'Кодекс Российской Федерации об административных правонарушениях от 30.12.2001 N 195-ФЗ', edition:'ред. от 04.08.2026, вступ. в силу с 03.11.2026' },
+  { id:'fzop', short:'ФЗ «О полиции»', badge:'3-ФЗ', color:'#14325c',
+    full:'Федеральный закон от 07.02.2011 N 3-ФЗ "О полиции"', edition:'ред. от 04.08.2026' },
 ];
+// как называть статью: «Статья 12.8. Название» / «Преамбула»
+const artName = a => a.head || ('Статья '+a.num+'.'+(a.title?' '+a.title:''));
+const artShort = a => a.head || ('Ст. '+a.num);
+const tagStyle = n => `style="background:${n.color}"`;
+// сноски вида <12> и <*> — надстрочным индексом
+const sups = h => h.replace(/&lt;(\d+|\*)&gt;/g,'<sup>$1</sup>');
 
 /* ======================= Утилиты ======================= */
 const $ = s => document.querySelector(s);
@@ -183,7 +197,9 @@ async function load(id){
     if(it.type==='article'){
       const a = {...it, idx:arts.length, path:[ctx.part,ctx.section,ctx.chapter].filter(Boolean)};
       a.plain = a.text.join('\n');
-      a.ntitle = norm('статья '+a.num+'. '+a.title);
+      a.snip = a.text.filter(p=>!/^КонсультантПлюс/.test(p)).join('\n') || a.plain;
+      a.nsnip = norm(a.snip);
+      a.ntitle = norm(a.head ? a.head : 'статья '+a.num+'. '+a.title);
       a.nbody = norm(a.plain);
       arts.push(a);
     } else {
@@ -258,7 +274,7 @@ function hlRegex(Q){
 }
 function highlight(text, re){ const e=esc(text); return re? e.replace(re,'$1<mark>$2</mark>') : e }
 function snippet(a, Q, re){
-  const body=a.plain, nb=a.nbody; let pos=-1;
+  const body=a.snip, nb=a.nsnip; let pos=-1;
   for(const t of terms(Q)){let i=-1; while((i=nb.indexOf(t,i+1))!==-1 && isL(nb[i-1])); if(i!==-1 && (pos===-1||i<pos)) pos=i}
   if(pos===-1) return highlight(body.slice(0,160)+(body.length>160?'…':''), re);
   const st=Math.max(0,pos-70), en=Math.min(body.length,pos+150);
@@ -305,13 +321,13 @@ function home(q){
       <div class="sec-title">Нормативные правовые акты</div>
       <div class="npa-list">${NPA.map(n=>`
         <button class="npa-btn" data-id="${n.id}">
-          <div class="npa-ico ${n.alt?'alt':''}">${esc(n.badge)}</div>
+          <div class="npa-ico" ${tagStyle(n)}>${esc(n.badge)}</div>
           <div class="npa-txt"><b>${esc(n.short)}</b><span>${esc(n.full)}</span><em>${esc(n.edition||'')}</em></div>
           <span class="chev">${ICON.chev}</span>
         </button>`).join('')}
       </div>
       ${favs.length?`<div class="sec-title">Избранные статьи</div><div class="favs">${favs.map(f=>`
-        <button class="fav" data-h="/${f.id}/${esc(f.num)}"><small>${esc(NPA.find(n=>n.id===f.id)?.badge||'')} ст.&nbsp;${esc(f.num)}</small><span>${esc(f.title)}</span></button>`).join('')}</div>`:''}
+        <button class="fav" data-h="/${f.id}/${esc(f.num)}"><small>${esc(NPA.find(n=>n.id===f.id)?.badge||'')} ${esc(f.short||('ст.\u00a0'+f.num))}</small><span>${esc(f.title)}</span></button>`).join('')}</div>`:''}
     </div>
     <div class="foot">Тексты — по данным СПС КонсультантПлюс.<br>Сверяйтесь с официальным опубликованием.</div>
   </div>`;
@@ -340,7 +356,7 @@ async function globalSearch(q){
 }
 function resItem(n,a,Q,re,direct,q){
   return `<button class="res ${direct?'direct':''}" data-h="/${n.id}/${esc(a.num)}${q&&!direct?'?q='+encodeURIComponent(q):''}">
-    <div class="h"><span class="tag ${n.alt?'alt':''}">${esc(n.badge)}</span><i>Статья ${esc(a.num)}.</i> ${highlight(a.title,direct?null:re)}</div>
+    <div class="h"><span class="tag" ${tagStyle(n)}>${esc(n.badge)}</span>${a.head?`<i>${highlight(a.head,direct?null:re)}</i>`:`<i>Статья ${esc(a.num)}.</i> ${a.title?sups(highlight(a.title,direct?null:re)):`<span style="font-weight:400;color:var(--muted)">${esc(a.hint||'')}</span>`}`}</div>
     ${direct?'':`<div class="s">${snippet(a,Q,re)}</div>`}</button>`;
 }
 function renderResults(box, head, list, Q, re, q, total){
@@ -398,15 +414,16 @@ async function npaView(n, q){
 function renderToc(n,d){
   const open = new Set(store.get('open_'+n.id,[]));
   let html='', grp=null, gi=0;
-  const close=()=>{ if(grp){ html+=`<div class="grp ${open.has(grp.k)?'open':''}" data-k="${grp.k}">
+  const close=()=>{ if(grp && grp.implicit){ html+=`<div class="arts solo">${grp.arts.join('')}</div>`; grp=null; return }
+    if(grp){ html+=`<div class="grp ${open.has(grp.k)?'open':''}" data-k="${grp.k}">
       <button>${ICON.chev}<span class="t">${grp.sub?`<small>${esc(grp.sub)}</small>`:''}${esc(grp.title)}</span><span class="n">${grp.arts.length}</span></button>
       <div class="arts">${grp.arts.join('')}</div></div>`; grp=null } };
   for(const it of d.items){
     if(it.type==='part'||it.type==='section'){ close(); html+=`<div class="part-h">${esc(it.title)}</div>` }
     else if(it.type==='chapter'){ close(); grp={k:'g'+(gi++), title:it.title, sub:it.label, arts:[]} }
     else if(it.type==='article'){
-      if(!grp) grp={k:'g'+(gi++), title:'Общие положения', arts:[]};
-      grp.arts.push(`<button class="art-link ${it.lost?'lost':''}" data-num="${esc(it.num)}"><b>${esc(it.num)}</b><span>${esc(it.title)}</span></button>`);
+      if(!grp) grp={k:'g'+(gi++), implicit:true, arts:[]};
+      grp.arts.push(`<button class="art-link ${it.lost?'lost':''}" data-num="${esc(it.num)}"><b>${it.head?'':esc(it.num)}</b><span>${it.head?`<strong>${esc(it.head)}</strong>`:esc(it.title)||`<em class="hint">${esc(it.hint||'')}</em>`}</span></button>`);
     }
   }
   close();
@@ -422,7 +439,7 @@ function renderToc(n,d){
 async function article(n, num, q){
   app.innerHTML = `<div class="bar"><div class="wrap"><div class="bar-row">
     <button class="ib" id="bk" aria-label="Назад">${ICON.back}</button>
-    <div class="bar-title">Ст. ${esc(num)}<small>${esc(n.short)}</small></div>
+    <div class="bar-title" id="bt">${/^\d/.test(num)?'Ст. '+esc(num):esc(num)}<small>${esc(n.short)}</small></div>
     <div class="hl-nav" id="hln"><button class="ib" id="hp">${ICON.up}</button><span id="hc"></span><button class="ib" id="hn">${ICON.down}</button></div>
     <button class="ib" id="fav" aria-label="В избранное">${ICON.star}</button>
     <button class="ib" id="fnt" aria-label="Размер шрифта">${ICON.font}</button>
@@ -433,19 +450,19 @@ async function article(n, num, q){
   let d; try{d=await load(n.id)}catch(e){$('#art').innerHTML='<div class="empty">Текст не загружен.</div>';return}
   const a=d.byNum[num];
   if(!a){$('#art').innerHTML='<div class="empty">Статья '+esc(num)+' не найдена.</div>';return}
-  document.title='Ст. '+a.num+' '+n.badge;
+  document.title=artShort(a)+' '+n.badge; $('#bt').firstChild.textContent=artShort(a);
   const Q=q?parseQuery(q):null, re=Q?hlRegex(Q):null;
   const crumb=a.path.map(x=>(x.label?x.label+'. ':'')+x.title).join(' › ');
   $('#art').innerHTML=`
     <div class="a-crumb">${esc(crumb)}</div>
-    <h2 class="a-title">Статья ${esc(a.num)}. ${highlight(a.title,re)}</h2>
+    <h2 class="a-title">${a.head?highlight(a.head,re):`Статья ${esc(a.num)}.${a.title?' '+sups(highlight(a.title,re)):''}`}</h2>
     <div class="a-body">${a.text.map(p=>{
       const cls = /^КонсультантПлюс: примечание/i.test(p)?'cons' : /^\((в ред\.|введен|введена|введено|п\.|ч\.|часть|абзац|утратил|см\.|пп\.)/i.test(p)?'note' : /^утратил[аио]? силу/i.test(p)?'lost':'';
-      return `<p class="${cls}">${highlight(p,re)}</p>`}).join('')}</div>
+      return `<p class="${/^<(\d+|\*)>/.test(p)?'note':cls}">${sups(highlight(p,re))}</p>`}).join('')}</div>
     <div class="a-nav"><div class="wrap">
-      <button id="pv" ${a.idx?'':'disabled'}>‹ ст. ${esc(d.arts[a.idx-1]?.num||'')}</button>
+      <button id="pv" ${a.idx?'':'disabled'}>‹ ${esc(d.arts[a.idx-1]?artShort(d.arts[a.idx-1]).toLowerCase():'')}</button>
       <button id="tc">Оглавление</button>
-      <button id="nx" ${d.arts[a.idx+1]?'':'disabled'}>ст. ${esc(d.arts[a.idx+1]?.num||'')} ›</button>
+      <button id="nx" ${d.arts[a.idx+1]?'':'disabled'}>${esc(d.arts[a.idx+1]?artShort(d.arts[a.idx+1]).toLowerCase():'')} ›</button>
     </div></div>`;
   const qs=q?'?q='+encodeURIComponent(q):'';
   $('#pv').onclick=()=>go('/'+n.id+'/'+d.arts[a.idx-1].num+qs);
@@ -455,13 +472,13 @@ async function article(n, num, q){
   const favBtn=$('#fav');
   const isFav=()=>store.get('favs',[]).some(f=>f.id===n.id&&f.num===a.num);
   const paint=()=>favBtn.innerHTML=isFav()?ICON.starf:ICON.star; paint();
-  favBtn.onclick=()=>{let f=store.get('favs',[]); if(isFav()){f=f.filter(x=>!(x.id===n.id&&x.num===a.num));toast('Убрано из избранного')} else {f.unshift({id:n.id,num:a.num,title:a.title});toast('Добавлено в избранное')} store.set('favs',f.slice(0,50)); paint()};
+  favBtn.onclick=()=>{let f=store.get('favs',[]); if(isFav()){f=f.filter(x=>!(x.id===n.id&&x.num===a.num));toast('Убрано из избранного')} else {f.unshift({id:n.id,num:a.num,title:a.title||a.head||a.hint||'',short:a.head?a.head:''});toast('Добавлено в избранное')} store.set('favs',f.slice(0,50)); paint()};
   // шрифт
   $('#fnt').onclick=()=>{fs=fs>=23?15:fs+2; document.documentElement.style.setProperty('--fs',fs+'px'); store.set('fs',fs); toast('Размер текста: '+fs)};
   // ссылка
   $('#lnk').onclick=async()=>{
     const url=location.href.split('#')[0]+'#/'+n.id+'/'+a.num;
-    const text=n.badge+', ст. '+a.num+'. '+a.title;
+    const text=n.short+', '+artName(a);
     try{ if(navigator.share){await navigator.share({title:text,url});return} await navigator.clipboard.writeText(text+'\n'+url); toast('Ссылка скопирована') }catch(e){}
   };
   // навигация по совпадениям
