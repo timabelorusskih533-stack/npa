@@ -51,7 +51,7 @@ def clean(s):
 
 def parse(lines, preamble=None):
     items, cur, pending = [], None, None   # pending — заголовок, продолжающийся на след. строке
-    seen = set()
+    seen = set(); hold = []; skip_paren = False     # примечания Консультанта между заголовком и статьёй
     for raw in lines:
         s = clean(raw)
         if not s or NOISE.match(s) or RE_DASH.match(s):
@@ -86,7 +86,7 @@ def parse(lines, preamble=None):
                 if cur: cur['text'].append(s)
                 continue
             seen.add(num)
-            cur = {'type': 'article', 'num': num, 'title': m.group(2).strip(), 'text': []}
+            cur = {'type': 'article', 'num': num, 'title': m.group(2).strip(), 'text': hold}; hold = []
             items.append(cur); pending = None; continue
         if pending is not None and pending['title'].startswith(('Раздел', 'Глава')):
             pending['title'] = s; continue
@@ -95,6 +95,12 @@ def parse(lines, preamble=None):
                 and not re.search(r'[а-яё]', s) and re.search(r'[А-ЯЁ]', s):
             items[-1]['title'] = (items[-1]['title'] + ' ' + s).strip(); continue
         pending = None
+        if skip_paren:                   # продолжение многострочной «(в ред. ...)»
+            skip_paren = not s.endswith(')'); continue
+        if cur is None and s.startswith('(') and items and items[-1]['type'] in ('chapter', 'section'):
+            skip_paren = not s.endswith(')'); continue   # «(в ред. ...)» к заголовку главы
+        if cur is None and s.startswith('КонсультантПлюс: примечание'):
+            hold.append(s); continue
         if cur is None and re.match(r'^<(\d+|\*)>', s):   # сноска к заголовку главы — пропускаем
             continue
         if cur is None and items and items[-1]['type'] in ('chapter', 'section'):
@@ -119,13 +125,67 @@ def parse(lines, preamble=None):
                 it['title'] = re.split(r'\s+[-–—]\s+', it['title'])[0].rstrip('. ') or 'Утратила силу'
     return items
 
+RE_ROMAN = re.compile(r'^([IVXL]+)\.\s+(.+)$')
+
+def nice(t):
+    """ЗАГЛАВНЫЕ → обычный регистр с сохранением имён собственных."""
+    t = t.strip().rstrip('.')
+    t = t[0] + t[1:].lower()
+    for a, b in (('российской федерации', 'Российской Федерации'), ('мвд россии', 'МВД России')):
+        t = t.replace(a, b)
+    return t
+
+def parse_order(lines):
+    """Приказ: «Текст приказа» + приложения, внутри — разделы с римскими номерами (пункты сквозные)."""
+    items, cur, mode = [], None, 'head'   # head → order → sign → app_hdr → body
+    app_no, title_buf, prefix = 0, [], ''
+    for raw in lines:
+        s = clean(raw)
+        if not s or NOISE.match(s) or RE_DASH.match(s):
+            continue
+        if mode == 'head':
+            if s.startswith('В соответствии') or re.match(r'^1\.\s', s):
+                cur = {'type': 'article', 'num': 'Приказ', 'head': 'Текст приказа', 'title': '', 'text': [s]}
+                items.append(cur); mode = 'order'
+            continue
+        if re.match(r'^Приложение( N \d+)?$', s):
+            cur = None; mode = 'app_hdr'; title_buf = []; app_no += 1
+            prefix = '' if app_no == 1 else f'п{app_no}-'
+            continue
+        if mode == 'order':
+            if s == 'Министр':
+                mode = 'sign'; cur = None; continue
+            cur['text'].append(s); continue
+        if mode == 'sign':
+            continue
+        if mode == 'app_hdr':
+            if re.search(r'[а-яё]', s) and not title_buf:
+                continue                                  # «к приказу МВД России», «от ...»
+            if not re.search(r'[а-яё]', s):
+                title_buf.append(s); continue
+            items.append({'type': 'part', 'title': nice(' '.join(title_buf))})
+            mode = 'body'                                 # и обрабатываем строку дальше
+        m = RE_ROMAN.match(s)
+        if m and len(s) < 1200 and not s.endswith(';'):
+            cur = {'type': 'article', 'num': prefix + m.group(1), 'head': s, 'title': '', 'text': []}
+            items.append(cur); continue
+        if cur is None:                                   # приложение без разделов
+            cur = {'type': 'article', 'num': f'прил{app_no}', 'head': items[-1]['title'], 'title': '', 'text': []}
+            items.append(cur)
+        if re.match(r'^(Глава|Раздел) утратил[аи]? силу', s) and not cur['text']:
+            cur['lost'] = True
+        cur['text'].append(s)
+    return items
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('out')
     ap.add_argument('--title', default=''); ap.add_argument('--edition', default='')
     ap.add_argument('--preamble', default='', help='начало текста преамбулы (для Конституции)')
+    ap.add_argument('--order', action='store_true', help='приказ: разделы I, II… и сквозные пункты')
     a = ap.parse_args()
-    items = parse(read_lines(Path(a.src)), a.preamble or None)
+    lines = read_lines(Path(a.src))
+    items = parse_order(lines) if a.order else parse(lines, a.preamble or None)
     arts = [i for i in items if i['type'] == 'article']
     if not arts:
         sys.exit('Статьи не найдены — проверь исходный файл')
